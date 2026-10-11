@@ -200,6 +200,33 @@ def cmd_eval(a):
     console.print_json(json.dumps(Store().stats(model=agent.model)))
 
 
+def cmd_export_run(a):
+    """Write one run's trace (tool calls and guardrail verdicts) as JSON, e.g. for the dashboard."""
+    from .store import Store
+
+    run = Store().get_run(a.run_id)
+    if not run:
+        raise SystemExit(f"No run {a.run_id}")
+    verdicts = iter(run["guardrail_events"])
+    steps = []
+    for call in run["tool_calls"]:
+        detail = call["input"]
+        if call["name"] == "submit_recommendation":
+            v = next(verdicts, None)
+            detail = {
+                "submitted": call["input"],
+                "guardrail_errors": v["errors"] if v else [],
+                "warnings": v["warnings"] if v else [],
+            }
+        steps.append({"name": call["name"], "is_error": bool(call["is_error"]), "detail": detail})
+    trace = {k: run[k] for k in ("id", "model", "question", "gameweek", "status", "answer", "guardrail_attempts")}
+    trace["steps"] = steps
+    out = Path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(trace, indent=2))
+    console.print(f"Wrote {out}")
+
+
 def cmd_serve(a):
     import uvicorn
 
@@ -251,6 +278,11 @@ def main(argv: list[str] | None = None):
     s.add_argument("--local", action="store_true", help="Use a free local model through Ollama")
     s.add_argument("--model")
     s.set_defaults(fn=cmd_eval)
+
+    s = sub.add_parser("export-run", help="Export a run's trace as JSON")
+    s.add_argument("run_id", type=int)
+    s.add_argument("--out", default="reports/agent/sample_run.json")
+    s.set_defaults(fn=cmd_export_run)
 
     s = sub.add_parser("serve", help="Run the HTTP API")
     s.add_argument("--port", type=int, default=8080)

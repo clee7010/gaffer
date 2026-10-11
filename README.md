@@ -96,21 +96,26 @@ An L2 penalty on attack α and defence δ pulls every team toward league average
 
 **Optimiser.** [`optimizer.py`](src/gaffer/optimizer.py) uses binary variables for squad, XI, and captain. It maximises horizon xP for starters, plus a small weight on the bench and the captain's next-gameweek xP, minus 4 × hits. Constraints cover budget (sell prices), 2/5/5/3, 3 per club, and formation. It solves the full 667-player problem in about 0.1 seconds.
 
-## Does the model work? A walk-forward backtest
+## Does the model work? A two-season walk-forward backtest
 
-`gaffer backtest` refits *everything* for each past gameweek *t* using only data from before *t*, predicts *t*, and scores it against what actually happened. The baselines are the stats managers usually use: **form** (points per game over the last 4 gameweeks) and **ppg** (season points per game). Each predictor also feeds the same optimiser, and the resulting XI is scored on its actual points, which measures decision quality and not just error.
+`gaffer backtest` refits *everything* for each gameweek *t* using only data from before *t*: team ratings, player rates, and team baselines. It then predicts *t* and scores the predictions against what actually happened. The baselines are the stats managers usually use: **form** (points per game over the last 4 gameweeks) and **ppg** (season points per game). Each predictor also feeds the same optimiser, and the resulting XI is scored on its actual points, which measures decision quality and not just error.
 
-2026/27 season, gameweeks 3–5 (all fully played gameweeks with at least 2 weeks of history), 364–406 players per week:
+Two complete seasons come from the open [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) dataset, with 370–560 players scored per gameweek. Each player's club is taken as of each gameweek, so January transfers are handled. **The model's two decay settings were tuned on 2024/25 only. 2025/26 was never looked at during development, so it's an honest holdout:**
 
-| Predictor | MAE ↓ | Spearman ρ ↑ | Top-20 picks' actual pts ↑ | Optimised XI actual pts ↑ |
-|---|---|---|---|---|
-| **Gaffer xP model** | **1.79** | **0.470** | **4.73** | **58.3** |
-| Form (last 4 GWs) | 2.08 | 0.434 | 4.20 | 43.3 |
-| Season PPG | 2.08 | 0.434 | 4.20 | 43.3 |
+| 2025/26 holdout (GW4–38) | Gaffer model | Form | Model vs form |
+|---|---|---|---|
+| Mean absolute error per player ↓ | **1.52** | 1.70 | **−10.5%**, better in **35/35** gameweeks |
+| Spearman rank correlation ↑ | **0.609** | 0.546 | **+11.6%**, better in **35/35** gameweeks |
+| Avg actual points of top-20 picks ↑ | **4.43** | 3.82 | +15.8%, better in 24/35 |
+| Actual points of the optimised XI ↑ | **57.6** | 48.4 | **+19.1%**, better in 26/35 |
 
-Compared with form, that's **14% lower MAE**. The model's XI scored **about 35% more real points** on average. Form and PPG tie because only 2–4 gameweeks have been played, so both cover the whole season so far.
+The tuning season (2024/25) shows the same pattern: −8.5% MAE (35/35 weeks), +8.6% rank correlation (33/35), and +22.7% XI points (28/35). Full per-gameweek results are in [`reports/`](reports/).
 
-> ⚠️ **Honest caveat:** three gameweeks is a small sample. The model had lower MAE every week, but in GW5 form beat it on rank correlation, top-20 picks, and XI points (57 vs 40). The backtest also leaves out injury news, which wasn't recorded historically, so it understates the live model. Rerun `gaffer backtest` as the season goes on for a firmer number; per-gameweek results land in [`reports/`](reports/).
+**What the tuning found.** The original model weighted every match equally and lost to form on ranking. Adding an exponential time decay fixed that, but the two parts of the model want different settings. *Who plays* changes week to week (half-life of 1 gameweek), while *how good a player is per 90 minutes* is best estimated from the whole season (no decay). The grid search is reproducible from `features_from_history` in [`xp.py`](src/gaffer/xp.py).
+
+**A data leakage catch.** The archive also includes FPL's own expected points (`xP`), which at first look unbeatable: rank correlation 0.74, and its XI averaging 97 points. That's too good. Among players who started the previous gameweek, FPL's archived xP averages **0.93 for those who then didn't play** and **3.28 for those who did** ([`fpl_xp_leakage`](src/gaffer/history.py)). The values were evidently captured after team news, so the comparison would be unfair, and it's excluded.
+
+> **Caveats:** the backtest assumes every player is available, because historical injury news isn't in the archive. That understates the live model, which does use the injury flags. The optimised-XI metric is noisy week to week (26/35 wins), so treat the error and ranking metrics as the headline.
 
 ## Quickstart
 
@@ -125,16 +130,32 @@ export ANTHROPIC_API_KEY=sk-ant-...
 uv run gaffer top --pos MID -n 10        # best projected midfielders
 uv run gaffer ratings                    # team attack/defence ratings
 uv run gaffer optimise --team 1234567    # pure-maths transfer plan
-uv run gaffer backtest                   # walk-forward evaluation
+uv run gaffer backtest --season 2025-26  # walk-forward evaluation (or 2024-25, or live)
+uv run --extra app streamlit run streamlit_app.py   # the dashboard
 
-# The agent:
+# The agent, with Claude:
 uv run gaffer advise --team 1234567                    # your team (id is in the URL of your Points page)
 uv run gaffer advise "Build me a wildcard squad"       # no team: drafts from scratch with £100m
 uv run gaffer advise --team 1234567 --ft 2 "Should I take a hit for Haaland?"
-uv run gaffer stats                                    # guardrail pass rates and violations caught
+
+# The agent, free and offline, on a local model:
+brew install ollama && ollama pull qwen3:4b
+OLLAMA_CONTEXT_LENGTH=16384 ollama serve &
+uv run gaffer advise --local --team 1234567
+
+uv run gaffer eval --local -n 10         # run on 10 real managers' teams, report guardrail stats
+uv run gaffer stats                      # pass rates and violations caught, from the database
 ```
 
-Configuration: `GAFFER_MODEL` (default `claude-opus-5-5`), `GAFFER_EFFORT` (default `medium`), `GAFFER_DB` (SQLite path).
+Configuration: `GAFFER_PROVIDER` (`anthropic` or `ollama`), `GAFFER_MODEL` (default `claude-opus-5-5`, or `qwen3:4b` locally), `GAFFER_EFFORT` (default `medium`), `GAFFER_DB` (SQLite path).
+
+### Two backends, one loop
+
+The agent loop, tools, and guardrails don't depend on which model drives them. `--local` points the official Anthropic SDK at [Ollama](https://ollama.com)'s Anthropic-compatible endpoint, so a free 4-billion-parameter model on a laptop runs the same code path as Claude. Small models make far more mistakes, which makes them a good stress test for the guardrails (results below).
+
+## Dashboard
+
+[`streamlit_app.py`](streamlit_app.py) is an interactive front end that needs no API key. It has five tabs: the backtest results with weekly charts, live projections with filters, a fixture-difficulty heatmap from the team-strength model, the squad optimiser (enter any FPL team id), and a trace of a real agent run. To host it free, deploy the repo on [Streamlit Community Cloud](https://streamlit.io/cloud) with `streamlit_app.py` as the entry point (it installs from `requirements.txt`).
 
 ## HTTP API and deployment (Google Cloud Run)
 
@@ -153,7 +174,7 @@ uv run gaffer serve   # http://localhost:8080/docs
 
 ## Engineering notes
 
-- **Tests (25, offline, about 2 seconds):** they run on a synthetic 20-club league. Coverage includes recovering known team strengths from simulated seasons, checking the closed-form Poisson expectations against Monte Carlo, blank and double gameweek handling, optimiser legality, every guardrail code, and the agent loop against a **scripted fake Claude** that submits a hallucinated total, gets bounced, and corrects itself. The fake checks the request is append-only, which keeps prompt caching and thinking-block replay valid.
+- **Tests (30, offline, under 15 seconds):** they run on a synthetic 20-club league. Coverage includes recovering known team strengths from simulated seasons, checking the closed-form Poisson expectations against Monte Carlo, blank and double gameweek handling, time-decayed features, skipping in-progress fixtures, optimiser legality, every guardrail code, both model backends, and the agent loop against a **scripted fake Claude** that submits a hallucinated total, gets bounced, and corrects itself. The fake checks the request is append-only, which keeps prompt caching and thinking-block replay valid.
 - **CI:** ruff lint and format, plus pytest, on every push ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 - **Cost control:** prompt caching on the static system prompt and tools, adaptive thinking with configurable effort, and token usage logged per run.
 - **Resilience:** FPL responses are cached on disk with TTLs. Tool exceptions go back to the model as `is_error` results instead of crashing the run. On a safety decline, the server-side model fallback takes over.

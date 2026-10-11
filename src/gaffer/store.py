@@ -120,7 +120,10 @@ class Store:
                 for g in c.execute("SELECT * FROM guardrail_events WHERE run_id = ? ORDER BY attempt", (run_id,))
             ]
             run["tool_calls"] = [
-                dict(t) for t in c.execute("SELECT name, is_error, latency_ms FROM tool_calls WHERE run_id = ?", (run_id,))
+                {**dict(t), "input": json.loads(t["input"])}
+                for t in c.execute(
+                    "SELECT name, input, is_error, latency_ms FROM tool_calls WHERE run_id = ? ORDER BY id", (run_id,)
+                )
             ]
             return run
 

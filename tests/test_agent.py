@@ -137,4 +137,4 @@ def test_local_backend_uses_plain_messages_api(model, tmp_path):
     fake = NS(messages=NS(create=create))
     Gaffer(client=fake, provider="ollama", store=Store(tmp_path / "g.db")).run("hi", Toolbox(model, TeamState(team_id=None)))
     assert calls[0]["model"] == "qwen3:4b"
-    assert not {"betas", "fallbacks", "thinking", "output_config"} & set(calls[0])
+    assert not {"betas", "fallbacks", "output_config"} & set(calls[0])

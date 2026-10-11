@@ -50,6 +50,9 @@ flag and resubmit. Never argue with them; they check the rules and the model.
 risks, and one line of personality. No markdown tables.
 """
 
+# Small local models narrate at length, which is slow on a laptop GPU.
+LOCAL_SUFFIX = "\nBe brief: call tools directly, with at most one short sentence before each call. /no_think"
+
 ToolEvent = Callable[[str, dict, dict | list | str, bool], None]
 
 
@@ -96,8 +99,9 @@ class Gaffer:
             # Ollama implements the core Messages API, not Claude's beta features.
             return self.client.messages.create(
                 model=self.model,
-                max_tokens=8000,
-                system=SYSTEM_PROMPT,
+                max_tokens=3000,
+                system=SYSTEM_PROMPT + LOCAL_SUFFIX,
+                thinking={"type": "disabled"},
                 tools=TOOL_SCHEMAS,
                 messages=messages,
             )

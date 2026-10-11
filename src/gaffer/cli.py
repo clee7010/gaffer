@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -20,9 +21,11 @@ console = Console()
 
 def _model(horizon: int):
     client = FPLClient()
-    with console.status("Fetching FPL data and fitting the model..."):
+    from .backtest import load_history
+
+    with console.status("Fetching FPL data and fitting the model (first run fetches every player's history)..."):
         snap = build_snapshot(client)
-        model = fit_model(snap, horizon=horizon)
+        model = fit_model(snap, horizon=horizon, hist=load_history(client, snap))
     return client, snap, model
 
 
@@ -96,7 +99,8 @@ def cmd_advise(a):
             console.print(f"  🔧 {name}({shown}){' [red]error[/]' if is_error else ''}")
 
     console.print(Panel(question, title=f"GW{model.next_gw} · {team.team_name or 'new squad'}"))
-    result = Gaffer().run(question, Toolbox(model, team), on_tool=on_tool)
+    agent = Gaffer(provider="ollama" if a.local else "anthropic", model=a.model)
+    result = agent.run(question, Toolbox(model, team), on_tool=on_tool)
 
     rec = result.recommendation
     if rec:
@@ -122,25 +126,78 @@ def cmd_advise(a):
 
 
 def cmd_backtest(a):
-    from .backtest import run_backtest, summarise
+    from .backtest import head_to_head, run_backtest, summarise
 
-    client = FPLClient()
-    snap = build_snapshot(client)
-    with console.status("Fetching player histories and running walk-forward backtest..."):
-        res = run_backtest(client, snap, start_gw=a.start)
-    out = Path(a.out)
+    if a.season == "live":
+        client = FPLClient()
+        snap, hist = build_snapshot(client), None
+    else:
+        from .history import load_season
+
+        client = None
+        snap, hist = load_season(a.season)
+    with console.status(f"Walk-forward backtest ({a.season})..."):
+        res = run_backtest(client, snap, start_gw=a.start, hist=hist)
+    out = Path(a.out) / a.season
     out.mkdir(parents=True, exist_ok=True)
     res.to_csv(out / "backtest_by_gw.csv", index=False)
     summary = summarise(res)
     summary.round(3).to_csv(out / "backtest_summary.csv")
-    console.print(res.round(3).to_string(index=False))
+    h2h = {b: head_to_head(res, b) for b in summary.index if b != "model"}
+    (out / "head_to_head.json").write_text(json.dumps(h2h, indent=2))
     console.print(summary.round(3).to_string())
+    if hist is not None and "fpl_xp" in hist:
+        from .history import fpl_xp_leakage
+
+        leak = fpl_xp_leakage(hist)
+        (out / "fpl_xp_leakage.json").write_text(json.dumps(leak, indent=2))
+        console.print(f"FPL archived xP leakage check: {leak}")
+    for base, metrics in h2h.items():
+        console.print(f"\n[bold]model vs {base}[/]")
+        for m, v in metrics.items():
+            console.print(f"  {m:24s} {v['improvement_pct']:+6.1f}%   better in {v['weeks_won']}/{v['weeks']} gameweeks")
 
 
 def cmd_stats(a):
     from .store import Store
 
-    console.print_json(json.dumps(Store().stats()))
+    console.print_json(json.dumps(Store().stats(model=a.model)))
+
+
+EVAL_QUESTIONS = [
+    "What transfers should I make this week, and who should I captain?",
+    "Should I take a -4 hit this week or roll my transfer?",
+    "Who is the best captain this week and why?",
+    "My worst player needs replacing. Who should go and who comes in?",
+    "Plan my team for the next few gameweeks.",
+]
+
+
+def cmd_eval(a):
+    """Run the agent over real managers' teams from the overall league."""
+    from .agent import Gaffer
+    from .store import Store
+    from .tools import Toolbox
+
+    client, snap, model = _model(a.horizon)
+    standings = client.get(f"/leagues-classic/314/standings/?page_standings={a.page}", ttl=86400)
+    entries = [r["entry"] for r in standings["standings"]["results"]][: a.n]
+    agent = Gaffer(provider="ollama" if a.local else "anthropic", model=a.model)
+    for k, entry in enumerate(entries):
+        question = EVAL_QUESTIONS[k % len(EVAL_QUESTIONS)]
+        try:
+            team = load_team(client, snap, entry)
+        except Exception as e:  # noqa: BLE001 - a deleted or private team shouldn't stop the batch
+            console.print(f"[yellow]skip team {entry}: {e}[/]")
+            continue
+        t0 = time.perf_counter()
+        res = agent.run(question, Toolbox(model, team))
+        dt = time.perf_counter() - t0
+        console.print(
+            f"[{k + 1}/{len(entries)}] team {entry}: {res.status} after {res.guardrail_attempts} submission(s), "
+            f"{res.tool_calls} tool calls, {dt:.0f}s"
+        )
+    console.print_json(json.dumps(Store().stats(model=agent.model)))
 
 
 def cmd_serve(a):
@@ -158,6 +215,8 @@ def main(argv: list[str] | None = None):
     s.add_argument("question", nargs="?")
     s.add_argument("--team", type=int, help="Your FPL team id (from the URL of your points page)")
     s.add_argument("--ft", type=int, help="Override free transfers")
+    s.add_argument("--local", action="store_true", help="Use a free local model through Ollama instead of Claude")
+    s.add_argument("--model", help="Model name (default claude-opus-5-5, or qwen3:4b with --local)")
     s.set_defaults(fn=cmd_advise)
 
     s = sub.add_parser("top", help="Top projected players")
@@ -177,11 +236,21 @@ def main(argv: list[str] | None = None):
     s.set_defaults(fn=cmd_optimise)
 
     s = sub.add_parser("backtest", help="Walk-forward backtest of the xP model")
-    s.add_argument("--start", type=int, default=3)
+    s.add_argument("--season", default="live", help="live (current season) or a past season, e.g. 2024-25")
+    s.add_argument("--start", type=int, default=4)
     s.add_argument("--out", default="reports")
     s.set_defaults(fn=cmd_backtest)
 
-    sub.add_parser("stats", help="Guardrail and run statistics from the database").set_defaults(fn=cmd_stats)
+    s = sub.add_parser("stats", help="Guardrail and run statistics from the database")
+    s.add_argument("--model", help="Only runs from this model")
+    s.set_defaults(fn=cmd_stats)
+
+    s = sub.add_parser("eval", help="Run the agent on real teams from the overall league and report guardrail stats")
+    s.add_argument("-n", type=int, default=10, help="Number of teams")
+    s.add_argument("--page", type=int, default=20, help="Overall-league standings page to sample (50 teams per page)")
+    s.add_argument("--local", action="store_true", help="Use a free local model through Ollama")
+    s.add_argument("--model")
+    s.set_defaults(fn=cmd_eval)
 
     s = sub.add_parser("serve", help="Run the HTTP API")
     s.add_argument("--port", type=int, default=8080)

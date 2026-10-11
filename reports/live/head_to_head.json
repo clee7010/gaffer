@@ -1,0 +1,46 @@
+{
+  "ppg": {
+    "mae": {
+      "improvement_pct": 11.2,
+      "weeks_won": 3,
+      "weeks": 3
+    },
+    "spearman": {
+      "improvement_pct": 21.6,
+      "weeks_won": 3,
+      "weeks": 3
+    },
+    "top20_actual_mean": {
+      "improvement_pct": -5.4,
+      "weeks_won": 1,
+      "weeks": 3
+    },
+    "optimal_xi_actual_pts": {
+      "improvement_pct": 25.6,
+      "weeks_won": 2,
+      "weeks": 3
+    }
+  },
+  "form": {
+    "mae": {
+      "improvement_pct": 11.5,
+      "weeks_won": 3,
+      "weeks": 3
+    },
+    "spearman": {
+      "improvement_pct": 23.3,
+      "weeks_won": 3,
+      "weeks": 3
+    },
+    "top20_actual_mean": {
+      "improvement_pct": -2.4,
+      "weeks_won": 1,
+      "weeks": 3
+    },
+    "optimal_xi_actual_pts": {
+      "improvement_pct": 28.5,
+      "weeks_won": 2,
+      "weeks": 3
+    }
+  }
+}

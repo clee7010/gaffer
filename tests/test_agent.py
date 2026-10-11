@@ -125,3 +125,16 @@ def test_tool_exceptions_go_back_to_the_model(model, tmp_path):
     Gaffer(client=fake, store=Store(tmp_path / "g.db")).run("hi", Toolbox(model, TeamState(team_id=None)))
     err = fake.requests[1]["messages"][-1]["content"][0]
     assert err["is_error"] and "No player with id 424242" in err["content"]
+
+
+def test_local_backend_uses_plain_messages_api(model, tmp_path):
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return reply([NS(type="text", text="hi")], stop="end_turn")
+
+    fake = NS(messages=NS(create=create))
+    Gaffer(client=fake, provider="ollama", store=Store(tmp_path / "g.db")).run("hi", Toolbox(model, TeamState(team_id=None)))
+    assert calls[0]["model"] == "qwen3:4b"
+    assert not {"betas", "fallbacks", "thinking", "output_config"} & set(calls[0])

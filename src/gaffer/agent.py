@@ -3,6 +3,10 @@
 A hand-written loop rather than the SDK's tool runner because the guardrail
 is part of the control flow: it counts submission attempts, bounces failed
 recommendations back as tool errors, and refuses to end the run on prose alone.
+
+Two backends share this loop. `anthropic` is Claude via the API. `ollama` is a
+free local model (default Qwen3 4B) through Ollama's Anthropic-compatible
+endpoint, so the same SDK, tools and guardrails run with no API key or cost.
 """
 
 from __future__ import annotations
@@ -18,8 +22,10 @@ import anthropic
 from .store import Store
 from .tools import TOOL_SCHEMAS, Toolbox
 
-MODEL = os.getenv("GAFFER_MODEL", "claude-opus-5-5")
+PROVIDER = os.getenv("GAFFER_PROVIDER", "anthropic")  # anthropic | ollama
+DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "ollama": "qwen3:4b"}
 EFFORT = os.getenv("GAFFER_EFFORT", "medium")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 SYSTEM_PROMPT = """\
 You are the Gaffer: a sharp, dry-humoured Fantasy Premier League manager who \
@@ -63,19 +69,38 @@ class Gaffer:
         self,
         client: anthropic.Anthropic | None = None,
         store: Store | None = None,
-        model: str = MODEL,
+        provider: str = PROVIDER,
+        model: str | None = None,
         effort: str = EFFORT,
         max_turns: int = 24,
         max_guardrail_attempts: int = 4,
     ):
-        self.client = client or anthropic.Anthropic()
+        if provider not in DEFAULT_MODELS:
+            raise ValueError(f"provider must be one of {list(DEFAULT_MODELS)}")
+        self.provider = provider
+        if client is None:
+            client = (
+                anthropic.Anthropic(base_url=OLLAMA_URL, api_key="ollama", timeout=900)
+                if provider == "ollama"
+                else anthropic.Anthropic()
+            )
+        self.client = client
         self.store = store or Store()
-        self.model = model
+        self.model = model or os.getenv("GAFFER_MODEL") or DEFAULT_MODELS[provider]
         self.effort = effort
         self.max_turns = max_turns
         self.max_guardrail_attempts = max_guardrail_attempts
 
     def _create(self, messages: list):
+        if self.provider == "ollama":
+            # Ollama implements the core Messages API, not Claude's beta features.
+            return self.client.messages.create(
+                model=self.model,
+                max_tokens=8000,
+                system=SYSTEM_PROMPT,
+                tools=TOOL_SCHEMAS,
+                messages=messages,
+            )
         return self.client.beta.messages.create(
             model=self.model,
             max_tokens=16000,

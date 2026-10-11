@@ -34,6 +34,11 @@ SUB_MINUTES = 20.0
 # the API's scoring config, which only carries the points value.
 DC_THRESHOLD = {"GKP": np.inf, "DEF": 10, "MID": 12, "FWD": 12}
 FEATURE_COLS = ["minutes", "starts", "xg", "xa", "dc", "saves", "bonus", "yellow"]
+# Exponential decay half-lives in gameweeks, tuned on the 2024/25 season only
+# (2025/26 is the untouched holdout). Who plays changes week to week; how good
+# they are per 90 doesn't, so minutes decay fast and per-90 output not at all.
+HALF_LIFE = 1.0
+RATE_HALF_LIFE = None
 
 
 def availability(players: pd.DataFrame) -> pd.Series:
@@ -51,19 +56,68 @@ def features_from_snapshot(snap: Snapshot) -> pd.DataFrame:
     return f
 
 
+RATE_COLS = ["xg", "xa", "dc", "saves", "bonus", "yellow"]
+
+
+def features_from_history(
+    hist: pd.DataFrame,
+    snap: Snapshot,
+    t: int,
+    half_life: float | None = HALF_LIFE,
+    rate_half_life: float | None = RATE_HALF_LIFE,
+    registered_only: bool = True,
+) -> pd.DataFrame:
+    """Model features for gameweek t from per-fixture history before t.
+
+    Two exponential decays: `half_life` (gameweeks) for minutes and starts, which
+    change fast with injuries and rotation; `rate_half_life` for per-90 output
+    (xG, xA, ...), which is more stable. `None` means no decay. Team games played
+    (`gp`) is the weighted count of the player's own fixture rows, which also
+    handles players who joined mid-season. Availability is set to 1; the live
+    model overwrites it with injury news.
+    """
+    past = hist[hist["round"] < t]
+    age = (t - 1 - past["round"]).to_numpy(float)
+
+    def weights(h):
+        return np.power(0.5, age / h) if h else np.ones(len(past))
+
+    w_min, w_rate = weights(half_life), weights(rate_half_life)
+    weighted = pd.DataFrame(index=past.index)
+    for col in ["minutes", "starts"]:
+        weighted[col] = past[col] * w_min
+    weighted["gp"] = w_min
+    for col in RATE_COLS:
+        weighted[col] = past[col] * w_rate
+    weighted["rate_minutes"] = past["minutes"] * w_rate
+    agg = weighted.groupby(past.player_id.to_numpy()).sum()
+
+    ids = agg.index[agg.rate_minutes > 0].intersection(snap.players.index)
+    team_at_t = hist[hist["round"] == t].groupby("player_id").team.first()
+    if registered_only:  # backtest: only players registered for gameweek t, at their club in t
+        ids = ids.intersection(team_at_t.index)
+    feat = snap.players.loc[ids, ["pos"]].join(agg)
+    feat["team"] = team_at_t.reindex(ids).fillna(snap.players.team.reindex(ids)).astype(int)
+    feat["avail"] = 1.0
+    return feat
+
+
 def player_rates(feat: pd.DataFrame) -> pd.DataFrame:
     """Per-90 rates (shrunk), expected minutes and playing probabilities."""
     out = pd.DataFrame(index=feat.index)
     mins = feat.minutes.astype(float)
     gp = feat.gp.astype(float).replace(0, np.nan)
+    # Per-90 rates may be time-weighted differently from minutes (see features_from_history).
+    rate_mins = feat["rate_minutes"].astype(float) if "rate_minutes" in feat else mins
 
-    regulars = feat[mins >= 450]
+    regulars = feat[rate_mins >= min(450.0, rate_mins.quantile(0.6))]
+    reg_mins = rate_mins[regulars.index]
     for col in ["xg", "xa", "dc", "saves", "bonus", "yellow"]:
-        raw = feat[col] / mins.clip(lower=1) * 90
-        reg_raw = regulars[col] / regulars.minutes * 90
+        raw = feat[col] / rate_mins.clip(lower=1) * 90
+        reg_raw = regulars[col] / reg_mins * 90
         prior = reg_raw.groupby(regulars.pos).mean().reindex(feat.pos).to_numpy()
         prior = np.nan_to_num(prior, nan=float(np.nan_to_num(reg_raw.mean())))
-        out[f"{col}90"] = (raw * mins + prior * PRIOR_MINUTES) / (mins + PRIOR_MINUTES)
+        out[f"{col}90"] = (raw * rate_mins + prior * PRIOR_MINUTES) / (rate_mins + PRIOR_MINUTES)
 
     start_rate = (feat.starts / gp).clip(0, 1).fillna(0)
     mins_pg = (mins / gp).clip(0, 90).fillna(0)
@@ -184,10 +238,20 @@ class ModelState:
         return self.gws[0]
 
 
-def fit_model(snap: Snapshot, horizon: int = 5) -> ModelState:
+def fit_model(snap: Snapshot, horizon: int = 5, hist: pd.DataFrame | None = None) -> ModelState:
+    """Fit for the upcoming gameweeks.
+
+    With per-fixture `hist` (see `backtest.load_history`) this uses the same
+    time-weighted features that were validated in the backtest; without it,
+    unweighted season totals from the bootstrap endpoint.
+    """
     gws = [g for g in range(snap.next_gw, snap.next_gw + horizon) if g <= 38]
     ratings = fit_ratings(snap.fixtures, list(snap.teams.index))
-    feat = features_from_snapshot(snap)
+    if hist is not None and not hist.empty:
+        feat = features_from_history(hist, snap, snap.next_gw, registered_only=False)
+        feat["avail"] = availability(snap.players).reindex(feat.index)
+    else:
+        feat = features_from_snapshot(snap)
     long = project_long(feat, ratings, snap.fixtures, gws, snap.scoring)
 
     per_gw = long.pivot_table(index="player_id", columns="gw", values="xp", aggfunc="sum")

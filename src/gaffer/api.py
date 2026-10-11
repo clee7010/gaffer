@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .agent import Gaffer
+from .backtest import load_history
 from .fpl import FPLClient, build_snapshot
 from .store import Store
 from .team import TeamState, load_team
@@ -27,7 +28,8 @@ _cache: dict = {"model": None, "at": 0.0}
 def current_model() -> ModelState:
     with _lock:
         if _cache["model"] is None or time.time() - _cache["at"] > MODEL_TTL_SECONDS:
-            _cache["model"] = fit_model(build_snapshot(_client))
+            snap = build_snapshot(_client)
+            _cache["model"] = fit_model(snap, hist=load_history(_client, snap))
             _cache["at"] = time.time()
         return _cache["model"]
 

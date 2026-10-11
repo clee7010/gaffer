@@ -124,21 +124,48 @@ class Store:
             ]
             return run
 
-    def stats(self) -> dict:
-        """Aggregate guardrail metrics across all runs."""
+    def stats(self, model: str | None = None) -> dict:
+        """Aggregate guardrail metrics across finished runs, optionally for one model."""
+        where, args = ("WHERE status != 'running'", ())
+        if model:
+            where, args = (where + " AND model = ?", (model,))
         with self._conn() as c:
-            q = lambda sql: c.execute(sql).fetchone()[0]
-            runs = q("SELECT COUNT(*) FROM runs WHERE status != 'running'")
-            first_try = q("SELECT COUNT(*) FROM guardrail_events WHERE attempt = 1 AND passed = 1")
-            caught = c.execute("SELECT errors FROM guardrail_events WHERE passed = 0").fetchall()
-            codes: dict[str, int] = {}
-            for (errs,) in caught:
-                for e in json.loads(errs):
-                    codes[e["code"]] = codes.get(e["code"], 0) + 1
-            return {
-                "runs": runs,
-                "accepted": q("SELECT COUNT(*) FROM runs WHERE status = 'accepted'"),
-                "first_attempt_pass": first_try,
-                "violations_caught": dict(sorted(codes.items(), key=lambda kv: -kv[1])),
-                "avg_tool_latency_ms": q("SELECT AVG(latency_ms) FROM tool_calls"),
-            }
+            runs = [dict(r) for r in c.execute(f"SELECT id, status FROM runs {where}", args)]
+            ids = [r["id"] for r in runs]
+            if not ids:
+                return {"runs": 0}
+            marks = ",".join("?" * len(ids))
+            events = [
+                dict(e) for e in c.execute(f"SELECT * FROM guardrail_events WHERE run_id IN ({marks}) ORDER BY attempt", ids)
+            ]
+            tools = c.execute(f"SELECT COUNT(*), AVG(latency_ms) FROM tool_calls WHERE run_id IN ({marks})", ids).fetchone()
+
+        by_run: dict[int, list[dict]] = {}
+        for e in events:
+            by_run.setdefault(e["run_id"], []).append(e)
+        submitted = [rid for rid in ids if rid in by_run]
+        first_pass = [rid for rid in submitted if by_run[rid][0]["passed"]]
+        accepted = {r["id"] for r in runs if r["status"] == "accepted"}
+        corrected = [rid for rid in submitted if not by_run[rid][0]["passed"] and rid in accepted]
+        blocked = [rid for rid in submitted if rid not in accepted]
+        codes: dict[str, int] = {}
+        for e in events:
+            for err in json.loads(e["errors"]):
+                codes[err["code"]] = codes.get(err["code"], 0) + 1
+        pct = lambda n, d: round(100 * n / d, 1) if d else None
+        return {
+            "model": model or "all",
+            "runs": len(ids),
+            "accepted": len(accepted),
+            "runs_that_submitted": len(submitted),
+            "submissions": len(events),
+            "submissions_rejected": sum(1 for e in events if not e["passed"]),
+            "pct_submissions_rejected": pct(sum(1 for e in events if not e["passed"]), len(events)),
+            "pct_first_attempt_pass": pct(len(first_pass), len(submitted)),
+            "self_corrected_after_rejection": len(corrected),
+            "invalid_advice_blocked": len(blocked),
+            "violations_caught": dict(sorted(codes.items(), key=lambda kv: -kv[1])),
+            "tool_calls": tools[0],
+            "avg_tool_calls_per_run": round(tools[0] / len(ids), 1),
+            "avg_tool_latency_ms": round(tools[1] or 0, 1),
+        }

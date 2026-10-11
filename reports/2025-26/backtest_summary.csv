@@ -1,0 +1,4 @@
+predictor,mae,spearman,top20_actual_mean,optimal_xi_actual_pts,gameweeks
+model,1.524,0.609,4.429,57.6,35
+form,1.703,0.546,3.824,48.371,35
+ppg,1.731,0.493,4.12,53.2,35

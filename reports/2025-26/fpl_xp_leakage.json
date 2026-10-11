@@ -1,0 +1,6 @@
+{
+  "gameweeks_with_xp": 11,
+  "xp_when_previous_starter_then_did_not_play": 1.11,
+  "xp_when_previous_starter_then_played_60": 3.84,
+  "corr_xp_points_given_60_mins": 0.599
+}

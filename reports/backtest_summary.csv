@@ -1,0 +1,4 @@
+predictor,mae,spearman,top20_actual_mean,optimal_xi_actual_pts
+model,1.79,0.47,4.733,58.333
+form,2.081,0.434,4.2,43.333
+ppg,2.081,0.434,4.2,43.333

@@ -1,0 +1,39 @@
+[project]
+name = "gaffer"
+version = "0.1.0"
+description = "A Claude agent that manages your Fantasy Premier League team, with an expected-points model, an ILP optimiser and deterministic guardrails."
+readme = "README.md"
+authors = [
+    { name = "clee7010", email = "clee7010@uni.sydney.edu.au" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.13.0",
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "pandas>=3.0.6",
+    "pulp[open-py]>=3.3.2",
+    "rich>=15.0.0",
+    "scipy>=1.17.1",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+gaffer = "gaffer.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 130
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

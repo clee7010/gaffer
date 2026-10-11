@@ -322,18 +322,14 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
+    { name = "plotly" },
     { name = "pulp", version = "3.3.2", source = { registry = "https://pypi.org/simple" }, extra = ["open-py"], marker = "python_full_version < '3.12'" },
     { name = "pulp", version = "4.0.0", source = { registry = "https://pypi.org/simple" }, extra = ["open-py"], marker = "python_full_version >= '3.12'" },
     { name = "rich" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-app = [
-    { name = "plotly" },
     { name = "streamlit" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
@@ -349,14 +345,13 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "pandas", specifier = ">=3.0.6" },
-    { name = "plotly", marker = "extra == 'app'", specifier = ">=7.1.0" },
+    { name = "plotly", specifier = ">=7.1" },
     { name = "pulp", extras = ["open-py"], specifier = ">=3.3.2" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "scipy", specifier = ">=1.17.1" },
-    { name = "streamlit", marker = "extra == 'app'", specifier = ">=1.65.0" },
+    { name = "streamlit", specifier = ">=1.65" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
-provides-extras = ["app"]
 
 [package.metadata.requires-dev]
 dev = [

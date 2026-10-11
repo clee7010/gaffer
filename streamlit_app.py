@@ -1,6 +1,6 @@
 """Gaffer dashboard: the model, optimiser and backtest, no API key needed.
 
-uv run --extra app streamlit run streamlit_app.py
+uv run streamlit run streamlit_app.py
 """
 
 from __future__ import annotations

@@ -131,7 +131,7 @@ uv run gaffer top --pos MID -n 10        # best projected midfielders
 uv run gaffer ratings                    # team attack/defence ratings
 uv run gaffer optimise --team 1234567    # pure-maths transfer plan
 uv run gaffer backtest --season 2025-26  # walk-forward evaluation (or 2024-25, or live)
-uv run --extra app streamlit run streamlit_app.py   # the dashboard
+uv run streamlit run streamlit_app.py   # the dashboard
 
 # The agent, with Claude:
 uv run gaffer advise --team 1234567                    # your team (id is in the URL of your Points page)
@@ -155,7 +155,7 @@ The agent loop, tools, and guardrails don't depend on which model drives them. `
 
 ## Dashboard
 
-[`streamlit_app.py`](streamlit_app.py) is an interactive front end that needs no API key. It has five tabs: the backtest results with weekly charts, live projections with filters, a fixture-difficulty heatmap from the team-strength model, the squad optimiser (enter any FPL team id), and a trace of a real agent run. To host it free, deploy the repo on [Streamlit Community Cloud](https://streamlit.io/cloud) with `streamlit_app.py` as the entry point (it installs from `requirements.txt`).
+[`streamlit_app.py`](streamlit_app.py) is an interactive front end that needs no API key. It has five tabs: the backtest results with weekly charts, live projections with filters, a fixture-difficulty heatmap from the team-strength model, the squad optimiser (enter any FPL team id), and an explanation of the agent. To host it free, deploy the repo on [Streamlit Community Cloud](https://streamlit.io/cloud) with `streamlit_app.py` as the entry point (it installs from `uv.lock`).
 
 ## HTTP API and deployment (Google Cloud Run)
 

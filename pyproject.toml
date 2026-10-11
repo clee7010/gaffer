@@ -13,20 +13,16 @@ dependencies = [
     "httpx>=0.28.1",
     "numpy>=2.4.6",
     "pandas>=3.0.6",
+    "plotly>=7.1",
     "pulp[open-py]>=3.3.2",
     "rich>=15.0.0",
     "scipy>=1.17.1",
+    "streamlit>=1.65",
     "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
 gaffer = "gaffer.cli:main"
-
-[project.optional-dependencies]
-app = [
-    "plotly>=7.1.0",
-    "streamlit>=1.65.0",
-]
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

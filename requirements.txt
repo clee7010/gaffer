@@ -1,4 +1,0 @@
-# For Streamlit Community Cloud, which installs from requirements.txt.
-.
-streamlit>=1.65
-plotly>=7.1
